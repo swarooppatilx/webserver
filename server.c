@@ -4,9 +4,14 @@
 #include <unistd.h> //POSIX APIs read(), write(), close()
 #include <netinet/in.h> //sockaddr_in
 #include <sys/socket.h> //socket(), bind(), listen(), accept()
-
+#include <pthread.h> //for multithreading
 
 #define PORT 8080
+
+//struct to pass multiple args to thread
+struct thread_args {
+  int socket;
+};
 
 void send_response(int socket, const char* body){
   char response[4096];
@@ -18,6 +23,35 @@ void send_response(int socket, const char* body){
     "\r\n"
     "%s",strlen(body), body);
   write(socket, response, strlen(response));
+}
+
+void* handle_client(void* arg){
+  struct thread_args* targs = (struct thread_args*) arg;
+  int new_socket = targs->socket;
+  free(targs); //prevent memory leak
+  
+  char buffer[3000] = {0};
+  read(new_socket, buffer, 3000);
+  printf("Request: \n%s\n",buffer);
+
+  char method[8], path[1024];
+  sscanf(buffer, "%s %s", method, path);
+  printf("Method: %s, Path: %s\n",method,path);
+
+  //respond to path
+   if(strcmp(path,"/")==0){
+      send_response(new_socket, "<h1>home page</h1>");
+    }
+   else if(strcmp(path,"/about")==0){
+      send_response(new_socket, "<h1>about page</h1>");
+    }
+    else{
+      send_response(new_socket, "<h1>404</h1>");
+    }
+
+   //close socket
+   close(new_socket);
+   return NULL;
 }
 
 int main(){
@@ -59,29 +93,19 @@ int main(){
      continue;
     }
 
-   //read client request
-   char buffer[3000] = {0};
-   read(new_socket,buffer,3000);
-   printf("Request: \n%s\n", buffer);
+    //allocate thread args
+    struct thread_args* targs = malloc(sizeof(struct thread_args));
+    targs->socket = new_socket;
 
-   //extract the requested path
-   char method[8], path[1024];
-   sscanf(buffer,"%s %s",method,path);
-   printf("Method: %s, Path: %s\n",method,path);
-   
-   //respond to path
-   if(strcmp(path,"/")==0){
-      send_response(new_socket, "<h1>home page</h1>");
+    pthread_t thread_id;
+    if(pthread_create(&thread_id, NULL, handle_client, targs)!=0){
+      perror("pthread_create failed");
+      close(new_socket);
+      free(targs);
     }
-   else if(strcmp(path,"/about")==0){
-      send_response(new_socket, "<h1>about page</h1>");
+    else {
+      pthread_detach(thread_id);
     }
-    else{
-      send_response(new_socket, "<h1>404</h1>");
-    }
-
-   //close socket
-   close(new_socket);
   }
   close(server_fd);
   return 0;
